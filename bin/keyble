@@ -1,0 +1,118 @@
+#!/usr/bin/env ruby
+
+$LOAD_PATH << File.expand_path('../lib', File.dirname(__FILE__))
+
+require 'keyble'
+require 'optparse'
+require 'net/scp'
+
+method = :list
+key = nil
+
+parser = OptionParser.new do |parser|
+  parser.on("-c", "--cache=s") do |s|
+    Keyble.cache_file_path = s
+  end
+  parser.on("-a", "--add=s") do |s|
+    method = :add
+    key = s
+  end
+  parser.on("-r", "--remove=s") do |s|
+    method = :remove
+    key = s
+  end
+  parser.on("-i", "--import") do |s|
+    method = :import
+  end
+  parser.on("-l", "--list") do
+    method = :list
+  end
+end
+
+args = parser.parse(*ARGV)
+
+case (method)
+when :add
+  if (File.exist?(key))
+    imported = Keyble.keys_import(key)
+
+    if (args.any?)
+      Keyble.keys_add(imported, args)
+    else
+      STDERR.puts "No servers specified."
+      exit(-11)
+    end
+  elsif (args.any?)
+    if (entry = Keyble.cache[key])
+      Keyble.keys_add({ key => entry }, args)
+    else
+      STDERR.puts "Could not locate key for #{key}"
+    end
+  else
+    puts parser
+    exit(-1)
+  end
+when :remove
+  if (File.exist?(key))
+    imported = Keyble.keys_import(key)
+
+    if (args.any?)
+      Keyble.keys_remove(imported, args)
+    else
+      STDERR.puts "No servers specified."
+      exit(-11)
+    end
+  elsif (args.any?)
+    Keyble.keys_remove([ key ], args)
+  else
+    puts parser
+    exit(-1)
+  end
+when :import
+  if (args.any?)
+    imported = { }
+
+    servers = args.reject do |path|
+      if (File.exist?(path))
+        imported.merge!(Keyble.read(path))
+
+        true
+      else
+        false
+      end
+    end
+
+    if (servers.any?)
+      server_keys = Keyble.keys_get(servers)
+      
+      server_keys.each do |server, keys|
+        imported.merge!(keys)
+      end
+    end
+
+    Keyble.cache_merge!(imported)
+    Keyble.cache_save!
+
+    Keyble.keys_display(imported)
+  else
+    STDERR.puts "No servers specified"
+    exit(-11)
+  end
+when :list
+  if (args.any?)
+    Keyble.keys_get(args).each do |server, keys|
+      if (args.length > 1)
+        puts server
+        puts '-' * 78
+      end
+
+      Keyble.keys_display(keys)
+    end
+  else
+    if (Keyble.cache.any?)
+      Keyble.keys_display(Keyble.cache)
+    else
+      puts "No keys in #{Keyble.cache_file_path}"
+    end
+  end
+end
