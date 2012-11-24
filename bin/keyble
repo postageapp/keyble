@@ -6,113 +6,177 @@ require 'keyble'
 require 'optparse'
 require 'net/scp'
 
-method = :list
+def interpret_args(args)
+  options = Hash.new { |h, k| h[k] = [ ] }
+
+  args.collect do |arg|
+    if (arg.match(/@/))
+      options[:keys] << arg
+    elsif (arg.match(/^+/))
+      options[:server_groups] << arg
+    elsif (arg.match(/^#/))
+      options[:key_groups] << arg
+    elsif (File.exist?(arg))
+      options[:files] << arg
+    else
+      options[:servers] << arg
+    end
+  end
+
+  options
+end
+
+command = :list
+context = :keys
 key = nil
+user = nil
+groups = nil
 
 parser = OptionParser.new do |parser|
-  parser.on("-c", "--cache=s") do |s|
-    Keyble.cache_file_path = s
+  parser.on("-c", "--cache-path=s") do |path|
+    Keyble.cache_path = path
   end
-  parser.on("-a", "--add=s") do |s|
-    method = :add
-    key = s
+  parser.on("-s", "--servers") do
+    context = :servers
   end
-  parser.on("-r", "--remove=s") do |s|
-    method = :remove
-    key = s
+  parser.on("-a", "--add") do
+    command = :add
   end
-  parser.on("-i", "--import") do |s|
-    method = :import
+  parser.on("-r", "--remove") do
+    command = :remove
+  end
+  parser.on("-d", "--delete") do
+    command = :delete
+  end
+  parser.on("-i", "--import") do
+    command = :import
   end
   parser.on("-l", "--list") do
-    method = :list
+    command = :list
+  end
+  parser.on("-f", "--find") do
+    command = :find
+  end
+  parser.on("-h", "--help") do
+    puts parser
+    exit(0)
   end
 end
 
-args = parser.parse(*ARGV)
+args = interpret_args(parser.parse(*ARGV))
 
-case (method)
-when :add
-  if (File.exist?(key))
-    imported = Keyble.keys_import(key)
-
-    if (args.any?)
-      Keyble.keys_add(imported, args)
-    else
-      STDERR.puts "No servers specified."
-      exit(-11)
+case (context)
+when :servers
+  case (command)
+  when :add
+    if (args[:keys].any?)
+      STDERR.puts "Cannot add keys to servers listing."
+      exit(-12)
     end
-  elsif (args.any?)
-    if (entry = Keyble.cache[key])
-      Keyble.keys_add({ key => entry }, args)
+    
+    Keyble.servers_add(args[:servers], groups)
+  when :list
+    if (Keyble.servers_cache.any?)
+      Keyble.servers_display(Keyble.servers_cache)
     else
-      STDERR.puts "Could not locate key for #{key}"
+      puts "No servers in cache."
+      exit(0)
     end
-  else
-    puts parser
-    exit(-1)
   end
-when :remove
-  if (File.exist?(key))
-    imported = Keyble.keys_import(key)
-
-    if (args.any?)
-      Keyble.keys_remove(imported, args)
-    else
-      STDERR.puts "No servers specified."
-      exit(-11)
-    end
-  elsif (args.any?)
-    Keyble.keys_remove([ key ], args)
-  else
-    puts parser
-    exit(-1)
-  end
-when :import
-  if (args.any?)
-    imported = { }
-
-    servers = args.reject do |path|
-      if (File.exist?(path))
-        imported.merge!(Keyble.read(path))
-
-        true
+when :keys
+  case (command)
+  when :add
+    if (args[:keys].any?)
+      if (args[:servers].any?)
+        Keyble.keys_add(args[:keys], args[:servers])
       else
-        false
+        STDERR.puts "No servers specified."
+        exit(-11)
       end
-    end
-
-    if (servers.any?)
-      server_keys = Keyble.keys_get(servers)
-      
-      server_keys.each do |server, keys|
-        imported.merge!(keys)
-      end
-    end
-
-    Keyble.cache_merge!(imported)
-    Keyble.cache_save!
-
-    Keyble.keys_display(imported)
-  else
-    STDERR.puts "No servers specified"
-    exit(-11)
-  end
-when :list
-  if (args.any?)
-    Keyble.keys_get(args).each do |server, keys|
-      if (args.length > 1)
-        puts server
-        puts '-' * 78
-      end
-
-      Keyble.keys_display(keys)
-    end
-  else
-    if (Keyble.cache.any?)
-      Keyble.keys_display(Keyble.cache)
     else
-      puts "No keys in #{Keyble.cache_file_path}"
+      puts parser
+      exit(-1)
+    end
+  when :remove
+    if (args[:keys].any?)
+      if (args[:servers].any?)
+        Keyble.keys_remove(args[:keys], args[:servers])
+      else
+        STDERR.puts "No servers specified."
+        exit(-11)
+      end
+    else
+      puts parser
+      exit(-1)
+    end
+  when :delete
+    if (args[:keys].any?)
+      Keyble.keys_delete(args[:keys])
+      
+      if (args[:servers].any?)
+        Keyble.keys_remove(args[:keys], args[:servers])
+      end
+    else
+      puts parser
+      exit(-1)
+    end
+  when :import
+    if (args[:servers].any? or args[:files].any?)
+      imported = { }
+
+      if (args[:servers].any?)
+        server_keys = Keyble.keys_get(args[:servers])
+        
+        server_keys.each do |server, keys|
+          imported.merge!(keys)
+        end
+      end
+
+      if (args[:files].any?)
+        args[:files].each do |file|
+          imported.merge!(Keyble.keys_read(file))
+        end
+      end
+
+      Keyble.keys_cache_merge!(imported)
+      Keyble.keys_cache_save!
+
+      Keyble.keys_display(imported)
+    else
+      STDERR.puts "No servers or files specified"
+      exit(-11)
+    end
+  when :list
+    if (args[:servers].any?)
+      collected = { }
+
+      Keyble.keys_get(args[:servers]).each do |server, keys|
+        if (args[:keys].any?)
+          keys.reject! do |key, v|
+            !args[:keys][key]
+          end
+        end
+
+        if (keys.any?)
+          collected[server] = keys
+        end
+      end
+
+      collected.each do |server, keys|
+        if (collected.length > 1)
+          puts server
+          puts '-' * 78
+        end
+
+        Keyble.keys_display(keys)
+      end
+    else
+      if (Keyble.keys_cache.any?)
+        Keyble.keys_display(Keyble.keys_cache)
+      else
+        puts "No keys in #{Keyble.cache_file_path(:keys)}"
+      end
     end
   end
-end
+end  
+

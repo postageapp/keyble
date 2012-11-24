@@ -1,5 +1,22 @@
+require 'fileutils'
+
 module Keyble
-  def parse(data)
+  def servers_parse(data)
+    result = { }
+
+    data.split(/\r?\n/).collect do |line|
+      name, groups = line.split(/\s*\#\s*/)
+      groups = groups.to_s.split(/\s+|\s*\,\s*/)
+
+      if (name and !name.empty?)
+        result[name] = groups
+      end
+    end
+
+    result
+  end
+
+  def keys_parse(data)
     result = { }
 
     data.split(/\r?\n/).collect do |line|
@@ -13,17 +30,39 @@ module Keyble
     result
   end
 
-  def read(path)
+  def servers_read(path)
     result = { }
 
     File.open(path) do |f|
-      result = parse(f.read)
+      result = servers_parse(f.read)
     end
 
     result
   end
 
-  def write(path, data)
+  def servers_write(path, data)
+    File.open(path, 'w') do |f|
+      data.each do |server, groups|
+        if (groups.any?)
+          f.puts("#{server} \# #{groups.join(' ')}")
+        else
+          f.puts(server)
+        end
+      end
+    end
+  end
+
+  def keys_read(path)
+    result = { }
+
+    File.open(path) do |f|
+      result = keys_parse(f.read)
+    end
+
+    result
+  end
+
+  def keys_write(path, data)
     File.open(path, 'w') do |f|
       data.each do |key, line|
         f.puts(line)
@@ -35,33 +74,76 @@ module Keyble
     ".ssh/authorized_keys"
   end
 
+  def cache_path=(value)
+    @cache_path = value && value.to_s
+  end
+
+  def cache_path
+    @cache_path || ENV['KEYBLE_CACHE_PATH'] || "#{ENV['HOME']}/.keyble"
+  end
+
   def cache_file_path=(value)
-    @cache_file_path = value
+    @cache_file_path = value && value.to_s
   end
 
-  def cache_file_path
-    @cache_file_path or File.expand_path(".keyble", ENV['HOME'])
+  def cache_file_path(context)
+    @cache_file_path or File.expand_path(context.to_s, cache_path)
   end
 
-  def cache
-    @cache ||=
-      if (File.exist?(cache_file_path))
-        read(cache_file_path)
+  def servers_cache
+    @servers_cache ||= begin
+      path = cache_file_path(:servers)
+
+      if (File.exist?(path))
+        servers_read(path)
       else
         { }
       end
+    end
   end
 
-  def cache_merge!(data)
-    cache.merge!(data)
+  def servers_cache_save!
+    return unless (@servers_cache)
 
-    cache
+    path = cache_file_path(:servers)
+    dir = File.dirname(path)
+
+    unless (File.exist?(path))
+      FileUtils.mkdir_p(dir)
+    end
+
+    servers_write(path, @servers_cache)
   end
 
-  def cache_save!
-    return unless (@cache)
+  def keys_cache
+    @keys_cache ||= begin
+      path = cache_file_path(:keys)
 
-    write(cache_file_path, @cache)
+      if (File.exist?(path))
+        keys_read(path)
+      else
+        { }
+      end
+    end
+  end
+
+  def keys_cache_merge!(data)
+    keys_cache.merge!(data)
+
+    keys_cache
+  end
+
+  def keys_cache_save!
+    return unless (@keys_cache)
+
+    path = cache_file_path(:keys)
+    dir = File.dirname(path)
+
+    unless (File.exist?(path))
+      FileUtils.mkdir_p(dir)
+    end
+
+    keys_write(path, @keys_cache)
   end
 
   def keys_get(servers)
@@ -112,6 +194,18 @@ module Keyble
     end
   end
 
+  def keys_delete(keys)
+    if (keys.respond_to?(:keys))
+      keys = keys.keys
+    end
+
+    keys.each do |key|
+      cache.delete(key)
+    end
+
+    cache_save!
+  end
+
   def keys_import(file)
     imported = read(file)
 
@@ -119,6 +213,30 @@ module Keyble
     cache_save!
 
     imported
+  end
+
+  def servers_add(servers, groups = nil)
+    servers.each do |server|
+      server_groups = servers_cache[server] ||= [ ]
+      server_groups += groups if (groups)
+
+      server_groups.uniq!
+      server_groups.sort!
+    end
+
+    servers_cache_save!
+  end
+
+  def servers_display(servers)
+    longest_key = servers.keys.collect { |k| k.to_s.length }.sort[-1]
+
+    servers.sort.each do |server, groups|
+      if (groups.any?)
+        puts "%-#{longest_key}s  [%s]" % [ server, groups.join(' ') ]
+      else
+        puts server
+      end
+    end
   end
 
   def keys_display(keys)
