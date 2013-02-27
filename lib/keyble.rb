@@ -161,7 +161,7 @@ module Keyble
   def keys_reassign(servers)
     servers.each do |server|
       Net::SCP.start(server, nil) do |scp|
-        existing = parse(scp.download!(ssh_authorized_keys_path))
+        existing = keys_parse(scp.download!(ssh_authorized_keys_path))
 
         merged = yield(server, existing.dup)
 

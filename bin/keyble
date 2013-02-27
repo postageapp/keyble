@@ -12,7 +12,7 @@ def interpret_args(args)
   args.collect do |arg|
     if (arg.match(/@/))
       options[:keys] << arg
-    elsif (arg.match(/^+/))
+    elsif (arg.match(/^\+/))
       options[:server_groups] << arg
     elsif (arg.match(/^#/))
       options[:key_groups] << arg
@@ -88,7 +88,9 @@ when :keys
   when :add
     if (args[:keys].any?)
       if (args[:servers].any?)
-        Keyble.keys_add(args[:keys], args[:servers])
+        keys = Keyble.keys_cache.slice(args[:keys])
+
+        Keyble.keys_add(keys, args[:servers])
       else
         STDERR.puts "No servers specified."
         exit(-11)
