@@ -1,6 +1,11 @@
 require 'fileutils'
+require 'net/scp'
 
 module Keyble
+  autoload(:ArgumentParser, 'keyble/argument_parser')
+  autoload(:Operation, 'keyble/operation')
+  autoload(:Strategy, 'keyble/strategy')
+
   def servers_parse(data)
     result = { }
 
